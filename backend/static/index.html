@@ -121,10 +121,40 @@ function setSelected(f){
   $('#btn-upload').disabled = false;
 }
 
+let polling = false;
+
+function pollJob(jobId){
+  const check = async () => {
+    if(!polling) return;
+    try{
+      const r = await fetch('/api/jobs/'+jobId);
+      const d = await r.json();
+      if(!d.ok){ log('Error: '+(d.error||'unknown'),'err'); return stopPoll(); }
+      const j = d.job;
+      if(j.message) log(j.message, j.status==='running'?'info':'');
+      if(j.status==='done'){
+        log(`Done! Processed ${j.rows} person(s) in ${j.elapsed_seconds}s`,'ok');
+        lastDownloadUrl = j.download_url;
+        $('#btn-download').classList.remove('hidden');
+        showResult(`Excel generated: ${j.excel} (${j.rows} persons, ${j.elapsed_seconds}s)`, false);
+        return stopPoll();
+      }
+      if(j.status==='error'){
+        log('Error: '+j.error,'err'); showResult('Processing failed: '+j.error, true);
+        return stopPoll();
+      }
+      setTimeout(check, 1500);
+    }catch(e){ log('Poll failed: '+e.message,'err'); setTimeout(check, 3000); }
+  };
+  polling = true;
+  const stopPoll = () => { polling = false; };
+  check();
+}
+
 $('#btn-upload').addEventListener('click', async () => {
   if(!selectedFile) return;
   const btn = $('#btn-upload');
-  btn.disabled = true; btn.textContent='Processing...';
+  btn.disabled = true; btn.textContent='Uploading...';
   $('#log').innerHTML=''; lastDownloadUrl=null; $('#btn-download').classList.add('hidden');
   const fd = new FormData(); fd.append('file', selectedFile);
   log('Uploading '+selectedFile.name+'...','info');
@@ -132,10 +162,8 @@ $('#btn-upload').addEventListener('click', async () => {
     const r = await fetch('/api/process-upload',{method:'POST',body:fd});
     const d = await r.json();
     if(d.ok){
-      log(`Done! Processed ${d.rows} person(s) in ${d.elapsed_seconds}s`,'ok');
-      lastDownloadUrl = d.download_url;
-      $('#btn-download').classList.remove('hidden');
-      showResult(`Excel generated: ${d.excel} (${d.rows} persons, ${d.elapsed_seconds}s)`, false);
+      log('Uploaded. Processing in background (job '+d.job_id+')...','info');
+      pollJob(d.job_id);
     } else { log('Error: '+d.error,'err'); showResult(d.error, true); }
   }catch(e){ log('Request failed: '+e.message,'err'); showResult('Request failed', true); }
   btn.disabled=false; btn.textContent='Upload & Process';
@@ -143,17 +171,15 @@ $('#btn-upload').addEventListener('click', async () => {
 
 $('#btn-process').addEventListener('click', async () => {
   const btn=$('#btn-process');
-  btn.disabled=true; btn.textContent='Processing...';
+  btn.disabled=true; btn.textContent='Starting...';
   $('#log').innerHTML=''; lastDownloadUrl=null; $('#btn-download').classList.add('hidden');
   log('Scanning data/input ...','info');
   try{
     const r = await fetch('/api/process',{method:'POST'});
     const d = await r.json();
     if(d.ok){
-      log(`Done! Processed ${d.rows} person(s) in ${d.elapsed_seconds}s`,'ok');
-      lastDownloadUrl = d.download_url;
-      $('#btn-download').classList.remove('hidden');
-      showResult(`Excel generated: ${d.excel} (${d.rows} persons, ${d.elapsed_seconds}s)`, false);
+      log('Processing started (job '+d.job_id+')...','info');
+      pollJob(d.job_id);
     } else { log('Error: '+d.error,'err'); showResult(d.error, true); }
   }catch(e){ log('Request failed: '+e.message,'err'); showResult('Request failed', true); }
   btn.disabled=false; btn.textContent='Scan & Process data/input';
