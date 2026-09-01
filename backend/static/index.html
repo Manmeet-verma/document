@@ -1,0 +1,174 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Document Data Extraction System</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:'Segoe UI',system-ui,-apple-system,sans-serif;background:#f0f2f5;min-height:100vh}
+.header{background:linear-gradient(135deg,#1a365d 0%,#2c5282 100%);color:#fff;padding:20px 30px;display:flex;justify-content:space-between;align-items:center;box-shadow:0 2px 10px rgba(0,0,0,.15)}
+.header h1{font-size:1.4rem;font-weight:600}
+.header .badge{background:#48bb78;padding:4px 12px;border-radius:20px;font-size:.75rem;font-weight:600}
+.header .badge.err{background:#fc8181}
+.container{max-width:960px;margin:30px auto;padding:0 20px}
+.card{background:#fff;border-radius:12px;padding:30px;margin-bottom:20px;box-shadow:0 1px 3px rgba(0,0,0,.08)}
+.card h2{font-size:1.1rem;color:#1a365d;margin-bottom:16px;padding-bottom:10px;border-bottom:2px solid #e2e8f0}
+.status-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:12px}
+.stat{padding:14px;background:#f7fafc;border-radius:8px;border-left:4px solid #4299e1}
+.stat .label{font-size:.75rem;color:#718096;text-transform:uppercase;letter-spacing:.5px}
+.stat .value{font-size:1rem;font-weight:600;color:#2d3748;margin-top:2px}
+.upload-zone{border:3px dashed #cbd5e0;border-radius:12px;padding:40px;text-align:center;transition:all .2s;cursor:pointer}
+.upload-zone:hover,.upload-zone.dragover{border-color:#4299e1;background:#ebf8ff}
+.upload-zone p{color:#718096;margin-bottom:12px}
+.upload-zone .icon{font-size:2.5rem;margin-bottom:8px}
+.btn{display:inline-block;padding:12px 28px;border:none;border-radius:8px;font-size:.9rem;font-weight:600;cursor:pointer;transition:all .2s;text-decoration:none}
+.btn-primary{background:#4299e1;color:#fff}
+.btn-primary:hover{background:#3182ce}
+.btn-success{background:#48bb78;color:#fff}
+.btn-success:hover{background:#38a169}
+.btn:disabled{opacity:.5;cursor:not-allowed}
+.actions{display:flex;gap:12px;margin-top:20px;flex-wrap:wrap;align-items:center}
+.log{background:#1a202c;color:#a0aec0;padding:16px;border-radius:8px;font-family:'Fira Code',monospace;font-size:.8rem;max-height:200px;overflow-y:auto;margin-top:16px;white-space:pre-wrap}
+.log .ok{color:#68d391}.log .err{color:#fc8181}.log .info{color:#63b3ed}
+.hidden{display:none}
+#result-box{padding:16px;border-radius:8px;margin-top:16px}
+#result-box.ok{background:#f0fff4;border:1px solid #c6f6d5;color:#276749}
+#result-box.err{background:#fff5f5;border:1px solid #fed7d7;color:#9b2c2c}
+</style>
+</head>
+<body>
+
+<div class="header">
+  <h1>Document Data Extraction System</h1>
+  <span id="ocr-badge" class="badge err">OCR: checking...</span>
+</div>
+
+<div class="container">
+  <div class="card">
+    <h2>System Status</h2>
+    <div class="status-grid">
+      <div class="stat"><div class="label">OCR Engine</div><div class="value" id="st-engine">--</div></div>
+      <div class="stat"><div class="label">Input Folders</div><div class="value" id="st-folders">--</div></div>
+      <div class="stat"><div class="label">Data Directory</div><div class="value" id="st-data">--</div></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Option A: Upload ZIP</h2>
+    <div class="upload-zone" id="dropzone">
+      <div class="icon">&#128230;</div>
+      <p>Drag &amp; drop your <strong>.zip</strong> file here, or click to browse</p>
+      <input type="file" id="file-input" accept=".zip" hidden>
+    </div>
+    <div class="actions">
+      <button class="btn btn-primary" id="btn-upload" disabled>Upload &amp; Process</button>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Option B: Process Local Folder</h2>
+    <p style="color:#718096;margin-bottom:12px">Place person subfolders inside <code>data/input/</code> then click below.</p>
+    <div class="actions">
+      <button class="btn btn-primary" id="btn-process">Scan &amp; Process data/input</button>
+      <button class="btn btn-success hidden" id="btn-download">Download Excel</button>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Process Log</h2>
+    <div class="log" id="log">Ready.</div>
+    <div id="result-box" class="hidden"></div>
+  </div>
+</div>
+
+<script>
+const $ = s => document.querySelector(s);
+const log = (msg, cls='') => { const el=$('#log'); el.innerHTML += `<span class="${cls}">${msg}</span>\n`; el.scrollTop=el.scrollHeight; };
+
+let selectedFile = null;
+let lastDownloadUrl = null;
+
+async function loadStatus(){
+  try{
+    const r = await fetch('/api/status');
+    const d = await r.json();
+    $('#st-engine').textContent = d.ocr_engine || 'none';
+    $('#st-folders').textContent = (d.input_folders||[]).join(', ') || 'none';
+    $('#st-data').textContent = d.data_dir;
+    const badge = $('#ocr-badge');
+    if(d.ocr_available){ badge.textContent='OCR: '+d.ocr_engine; badge.className='badge'; }
+    else { badge.textContent='OCR: NOT available'; badge.className='badge err'; }
+  }catch(e){ console.error(e); }
+}
+loadStatus();
+
+const dropzone = $('#dropzone');
+const fileInput = $('#file-input');
+
+dropzone.addEventListener('click', () => fileInput.click());
+dropzone.addEventListener('dragover', e => { e.preventDefault(); dropzone.classList.add('dragover'); });
+dropzone.addEventListener('dragleave', () => dropzone.classList.remove('dragover'));
+dropzone.addEventListener('drop', e => {
+  e.preventDefault(); dropzone.classList.remove('dragover');
+  if(e.dataTransfer.files.length){ setSelected(e.dataTransfer.files[0]); }
+});
+fileInput.addEventListener('change', () => { if(fileInput.files.length) setSelected(fileInput.files[0]); });
+
+function setSelected(f){
+  selectedFile = f;
+  dropzone.innerHTML = `<div class="icon">&#128196;</div><p><strong>${f.name}</strong> (${(f.size/1024/1024).toFixed(1)} MB)</p>`;
+  $('#btn-upload').disabled = false;
+}
+
+$('#btn-upload').addEventListener('click', async () => {
+  if(!selectedFile) return;
+  const btn = $('#btn-upload');
+  btn.disabled = true; btn.textContent='Processing...';
+  $('#log').innerHTML=''; lastDownloadUrl=null; $('#btn-download').classList.add('hidden');
+  const fd = new FormData(); fd.append('file', selectedFile);
+  log('Uploading '+selectedFile.name+'...','info');
+  try{
+    const r = await fetch('/api/process-upload',{method:'POST',body:fd});
+    const d = await r.json();
+    if(d.ok){
+      log(`Done! Processed ${d.rows} person(s) in ${d.elapsed_seconds}s`,'ok');
+      lastDownloadUrl = d.download_url;
+      $('#btn-download').classList.remove('hidden');
+      showResult(`Excel generated: ${d.excel} (${d.rows} persons, ${d.elapsed_seconds}s)`, false);
+    } else { log('Error: '+d.error,'err'); showResult(d.error, true); }
+  }catch(e){ log('Request failed: '+e.message,'err'); showResult('Request failed', true); }
+  btn.disabled=false; btn.textContent='Upload & Process';
+});
+
+$('#btn-process').addEventListener('click', async () => {
+  const btn=$('#btn-process');
+  btn.disabled=true; btn.textContent='Processing...';
+  $('#log').innerHTML=''; lastDownloadUrl=null; $('#btn-download').classList.add('hidden');
+  log('Scanning data/input ...','info');
+  try{
+    const r = await fetch('/api/process',{method:'POST'});
+    const d = await r.json();
+    if(d.ok){
+      log(`Done! Processed ${d.rows} person(s) in ${d.elapsed_seconds}s`,'ok');
+      lastDownloadUrl = d.download_url;
+      $('#btn-download').classList.remove('hidden');
+      showResult(`Excel generated: ${d.excel} (${d.rows} persons, ${d.elapsed_seconds}s)`, false);
+    } else { log('Error: '+d.error,'err'); showResult(d.error, true); }
+  }catch(e){ log('Request failed: '+e.message,'err'); showResult('Request failed', true); }
+  btn.disabled=false; btn.textContent='Scan & Process data/input';
+});
+
+$('#btn-download').addEventListener('click', () => {
+  if(lastDownloadUrl) window.location.href = lastDownloadUrl;
+});
+
+function showResult(msg, isErr){
+  const el=$('#result-box');
+  el.className=isErr?'':'ok';
+  el.style.display='block';
+  el.textContent=msg;
+}
+</script>
+</body>
+</html>

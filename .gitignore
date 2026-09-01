@@ -1,0 +1,17 @@
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
+
+# generated data
+data/input/
+data/output/
+data/uploads/
+data/runs/
+
+# pages/IDE
+*.log
+.DS_Store
+.vscode/
