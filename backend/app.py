@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import shutil
 import time
 import zipfile
 from pathlib import Path
@@ -12,7 +13,7 @@ from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 
 from .core.excel_writer import generate_excel
-from .core.pipeline import process_folder
+from .core.pipeline import discover_persons, process_folder
 
 ROOT = Path(__file__).resolve().parent.parent  # .../doc_extractor
 DATA_DIR = Path(os.environ.get("DATA_ROOT", ROOT / "data"))
@@ -21,6 +22,7 @@ OUTPUT_DIR = DATA_DIR / "output"
 STATIC_DIR = ROOT / "backend" / "static"
 
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+INPUT_DIR.mkdir(parents=True, exist_ok=True)
 
 app = FastAPI(title="Document Data Extraction System")
 
@@ -86,6 +88,7 @@ async def process_upload(file: UploadFile = File(...)):
     main_folder = _find_main_folder(work_dir)
     start = time.time()
     rows = process_folder(str(main_folder))
+    imported = _import_to_input(main_folder)
     excel_path = _write_excel(rows, str(OUTPUT_DIR))
     elapsed = round(time.time() - start, 2)
 
@@ -95,6 +98,7 @@ async def process_upload(file: UploadFile = File(...)):
         "excel": Path(excel_path).name,
         "download_url": f"/api/download/{Path(excel_path).name}",
         "elapsed_seconds": elapsed,
+        "imported_to_input": imported,
     }
 
 
@@ -126,6 +130,24 @@ def _find_main_folder(work_dir: Path) -> Path:
     if len(dirs) == 1 and len(entries) == 1:
         return dirs[0]
     return work_dir
+
+
+def _import_to_input(main_folder: Path) -> list[str]:
+    """Copy every discovered person folder into data/input so the upload can
+    also be processed later via the 'Scan & Process data/input' option."""
+    INPUT_DIR.mkdir(parents=True, exist_ok=True)
+    imported: list[str] = []
+    for person_dir in discover_persons(str(main_folder)):
+        name = os.path.basename(person_dir)
+        dest = INPUT_DIR / name
+        if dest.exists():
+            i = 1
+            while (INPUT_DIR / f"{name}_{i}").exists():
+                i += 1
+            dest = INPUT_DIR / f"{name}_{i}"
+        shutil.copytree(person_dir, dest, dirs_exist_ok=True)
+        imported.append(dest.name)
+    return imported
 
 
 def _list_input_folders():
