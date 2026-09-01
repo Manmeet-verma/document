@@ -15,7 +15,7 @@ from .core.excel_writer import generate_excel
 from .core.pipeline import process_folder
 
 ROOT = Path(__file__).resolve().parent.parent  # .../doc_extractor
-DATA_DIR = ROOT / "data"
+DATA_DIR = Path(os.environ.get("DATA_ROOT", ROOT / "data"))
 INPUT_DIR = DATA_DIR / "input"
 OUTPUT_DIR = DATA_DIR / "output"
 STATIC_DIR = ROOT / "backend" / "static"
