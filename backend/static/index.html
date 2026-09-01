@@ -89,6 +89,12 @@ const log = (msg, cls='') => { const el=$('#log'); el.innerHTML += `<span class=
 let selectedFile = null;
 let lastDownloadUrl = null;
 
+async function readJson(r){
+  const text = await r.text();
+  if(!r.ok || !text) throw new Error(text || ('HTTP '+r.status));
+  try{ return JSON.parse(text); }catch(e){ throw new Error(text.slice(0,200) || ('HTTP '+r.status)); }
+}
+
 async function loadStatus(){
   try{
     const r = await fetch('/api/status');
@@ -160,7 +166,7 @@ $('#btn-upload').addEventListener('click', async () => {
   log('Uploading '+selectedFile.name+'...','info');
   try{
     const r = await fetch('/api/process-upload',{method:'POST',body:fd});
-    const d = await r.json();
+    const d = await readJson(r);
     if(d.ok){
       log('Uploaded. Processing in background (job '+d.job_id+')...','info');
       pollJob(d.job_id);
@@ -176,7 +182,7 @@ $('#btn-process').addEventListener('click', async () => {
   log('Scanning data/input ...','info');
   try{
     const r = await fetch('/api/process',{method:'POST'});
-    const d = await r.json();
+    const d = await readJson(r);
     if(d.ok){
       log('Processing started (job '+d.job_id+')...','info');
       pollJob(d.job_id);

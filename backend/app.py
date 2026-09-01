@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import os
 import shutil
+import tempfile
 import time
 import zipfile
 from concurrent.futures import ThreadPoolExecutor
@@ -27,6 +28,13 @@ STATIC_DIR = ROOT / "backend" / "static"
 
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 INPUT_DIR.mkdir(parents=True, exist_ok=True)
+
+# Starlette spools large uploads to tempfile.tempdir; force it onto the
+# disk-backed data dir instead of RAM-backed /tmp so big zips don't blow
+# up memory or fill tmpfs (which would kill the upload with "Failed to fetch").
+SPOOL_DIR = DATA_DIR / "spool"
+SPOOL_DIR.mkdir(parents=True, exist_ok=True)
+tempfile.tempdir = str(SPOOL_DIR)
 
 app = FastAPI(title="Document Data Extraction System")
 
@@ -115,7 +123,17 @@ def job_status(job_id: str):
 @app.post("/api/process")
 def process():
     """Start a background job processing whatever is inside data/input."""
-    if not any(INPUT_DIR.iterdir()):
+    try:
+        INPUT_DIR.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        return {"ok": False, "error": f"Cannot create data/input: {exc}"}
+
+    try:
+        has_input = any(INPUT_DIR.iterdir())
+    except OSError as exc:
+        return {"ok": False, "error": f"Cannot read data/input: {exc}"}
+
+    if not has_input:
         return {"ok": False, "error": "No input folders found inside data/input."}
 
     job = _start_job(f"folder_{int(time.time() * 1000)}", INPUT_DIR)
@@ -132,8 +150,18 @@ async def process_upload(file: UploadFile = File(...)):
     work_dir = DATA_DIR / "runs" / run_id
     work_dir.mkdir(parents=True, exist_ok=True)
     zip_path = work_dir / file.filename
-    with open(zip_path, "wb") as fh:
-        fh.write(await file.read())
+
+    # Stream to disk in chunks instead of buffering the whole zip in memory.
+    try:
+        with open(zip_path, "wb") as fh:
+            shutil.copyfileobj(file.file, fh, length=1024 * 1024)
+    except OSError as exc:
+        return {"ok": False, "error": f"Could not save upload: {exc}"}
+
+    with open(zip_path, "rb") as fh:
+        head = fh.read(4)
+    if head != b"PK\x03\x04":
+        return {"ok": False, "error": "Invalid ZIP archive (bad header)."}
 
     try:
         with zipfile.ZipFile(zip_path) as zf:
@@ -195,7 +223,10 @@ def _import_to_input(main_folder: Path) -> list[str]:
 
 
 def _list_input_folders():
-    return [p.name for p in INPUT_DIR.iterdir() if p.is_dir()]
+    try:
+        return [p.name for p in INPUT_DIR.iterdir() if p.is_dir()]
+    except OSError:
+        return []
 
 
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
