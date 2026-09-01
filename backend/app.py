@@ -11,7 +11,7 @@ import zipfile
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
-from fastapi import FastAPI, File, UploadFile
+from fastapi import FastAPI, Request
 from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 
@@ -35,6 +35,7 @@ INPUT_DIR.mkdir(parents=True, exist_ok=True)
 SPOOL_DIR = DATA_DIR / "spool"
 SPOOL_DIR.mkdir(parents=True, exist_ok=True)
 tempfile.tempdir = str(SPOOL_DIR)
+
 
 app = FastAPI(title="Document Data Extraction System")
 
@@ -96,7 +97,12 @@ def _start_job(job_id: str, main_folder: Path) -> dict:
 @app.get("/", response_class=HTMLResponse)
 def index():
     html = (STATIC_DIR / "index.html").read_text(encoding="utf-8")
-    return html
+    return HTMLResponse(content=html, headers={"Cache-Control": "no-store"})
+
+
+@app.head("/")
+def index_head():
+    return HTMLResponse(headers={"Cache-Control": "no-store"})
 
 
 @app.get("/api/status")
@@ -141,20 +147,24 @@ def process():
 
 
 @app.post("/api/process-upload")
-async def process_upload(file: UploadFile = File(...)):
-    """Upload a ZIP of the main folder, extract it, then process in background."""
-    if not file.filename.lower().endswith(".zip"):
-        return {"ok": False, "error": "Please upload a .zip file."}
+async def process_upload(request: Request, filename: str = "upload.zip"):
+    """Upload the ZIP as a raw body (streamed straight to disk).
 
+    Uses application/zip (or query ?filename=) from the browser instead of
+    multipart/form-data, which never buffers the whole file and avoids the
+    flaky/failing multipart parsing on very large uploads.
+    """
     run_id = str(int(time.time() * 1000))
     work_dir = DATA_DIR / "runs" / run_id
     work_dir.mkdir(parents=True, exist_ok=True)
-    zip_path = work_dir / file.filename
+    safe_name = Path(filename).name or "upload.zip"
+    zip_path = work_dir / safe_name
 
-    # Stream to disk in chunks instead of buffering the whole zip in memory.
+    # Stream raw body chunks to disk so memory stays flat for huge zips.
     try:
         with open(zip_path, "wb") as fh:
-            shutil.copyfileobj(file.file, fh, length=1024 * 1024)
+            async for chunk in request.stream():
+                fh.write(chunk)
     except OSError as exc:
         return {"ok": False, "error": f"Could not save upload: {exc}"}
 

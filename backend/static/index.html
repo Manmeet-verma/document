@@ -162,10 +162,11 @@ $('#btn-upload').addEventListener('click', async () => {
   const btn = $('#btn-upload');
   btn.disabled = true; btn.textContent='Uploading...';
   $('#log').innerHTML=''; lastDownloadUrl=null; $('#btn-download').classList.add('hidden');
-  const fd = new FormData(); fd.append('file', selectedFile);
+  const fd = selectedFile;
   log('Uploading '+selectedFile.name+'...','info');
   try{
-    const r = await fetch('/api/process-upload',{method:'POST',body:fd});
+    const r = await fetch('/api/process-upload?filename='+encodeURIComponent(selectedFile.name),
+      {method:'POST', headers:{'Content-Type':'application/zip'}, body: fd});
     const d = await readJson(r);
     if(d.ok){
       log('Uploaded. Processing in background (job '+d.job_id+')...','info');
